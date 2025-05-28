@@ -2,6 +2,8 @@ using Pulumi;
 using Pulumi.Aws.DynamoDB;
 using Pulumi.Aws.DynamoDB.Inputs;
 using Pulumi.Aws.CloudWatch;
+using System;
+using System.Collections.Generic;
 
 return await Deployment.RunAsync(() =>
 {
