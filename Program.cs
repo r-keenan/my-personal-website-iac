@@ -7,8 +7,10 @@ using Pulumi.Aws.CloudWatch;
 using Pulumi.Aws.Iam;
 using Pulumi.Aws.Lambda;
 using Pulumi.Aws.Lambda.Inputs;
+using Pulumi.Aws.SecretsManager;
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 
 return await Pulumi.Deployment.RunAsync(() =>
 {
@@ -197,6 +199,14 @@ return await Pulumi.Deployment.RunAsync(() =>
                     ],
                     ""Resource"": ""{contact_form_table.Arn}"",
                     ""Effect"": ""Allow""
+                }},
+                {{
+                    ""Action"": [
+                        ""secretsmanager:GetSecretValue"",
+                        ""secretsmanager:DescribeSecret""
+                    ],
+                    ""Resource"": ""arn:aws:secretsmanager:*:*:*"",
+                    ""Effect"": ""Allow""
                 }}
             ]
         }}"),
@@ -282,6 +292,52 @@ return await Pulumi.Deployment.RunAsync(() =>
         },
     });
 
+    // Create secret to store API Gateway base URL
+    var apiGatewaySecret = new Secret("contact-form-api-gateway-url-secret", new()
+    {
+        Name = "CONTACT_FORM_API_GATEWAY_URL",
+        Description = "API Gateway base URL for contact form API",
+        Tags =
+        {
+            { "Environment", "production" },
+            { "Application", "contact-form" },
+            { "Purpose", "APIGatewayURL" },
+        },
+    });
+
+    // Create secret version to store the API Gateway URL value
+    var apiGatewaySecretVersion = new SecretVersion("contact-form-api-gateway-url-secret-version", new()
+    {
+        SecretId = apiGatewaySecret.Id,
+        SecretString = stage.InvokeUrl.Apply(url => JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            { "CONTACT_FORM_API_GATEWAY_URL", url }
+        })),
+    });
+
+    // Create secret to store API Gateway API key
+    var apiKeySecret = new Secret("contact-form-api-key-secret", new()
+    {
+        Name = "CONTACT_FORM_API_KEY",
+        Description = "API key for contact form API Gateway",
+        Tags =
+        {
+            { "Environment", "production" },
+            { "Application", "contact-form" },
+            { "Purpose", "APIKey" },
+        },
+    });
+
+    // Create secret version to store the API key value
+    var apiKeySecretVersion = new SecretVersion("contact-form-api-key-secret-version", new()
+    {
+        SecretId = apiKeySecret.Id,
+        SecretString = apiKey.Value.Apply(key => JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            { "CONTACT_FORM_API_KEY", key }
+        })),
+    });
+
     // Create Usage Plan (after stage is created)
     var usagePlan = new UsagePlan("contact-form-usage-plan", new()
     {
@@ -356,5 +412,7 @@ return await Pulumi.Deployment.RunAsync(() =>
         ["apiKeyValue"] = apiKey.Value,
         ["usagePlanId"] = usagePlan.Id,
         ["lambdaFunctionArn"] = lambdaFunction.Arn,
+        ["apiGatewaySecretArn"] = apiGatewaySecret.Arn,
+        ["apiKeySecretArn"] = apiKeySecret.Arn,
     };
 });
