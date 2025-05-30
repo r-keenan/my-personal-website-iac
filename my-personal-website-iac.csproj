@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -9,6 +9,11 @@
   <ItemGroup>
     <PackageReference Include="Pulumi" Version="3.*" />
     <PackageReference Include="Pulumi.Aws" Version="6.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="ContactFormLambda/**" />
+    <None Remove="ContactFormLambda/**" />
   </ItemGroup>
 
 </Project>

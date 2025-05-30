@@ -1,9 +1,12 @@
 using Pulumi;
+using Pulumi.Aws.ApiGateway;
+using Pulumi.Aws.ApiGateway.Inputs;
 using Pulumi.Aws.DynamoDB;
 using Pulumi.Aws.DynamoDB.Inputs;
 using Pulumi.Aws.CloudWatch;
-using Pulumi.Aws.ApiGateway;
-using Pulumi.Aws.ApiGateway.Inputs;
+using Pulumi.Aws.Iam;
+using Pulumi.Aws.Lambda;
+using Pulumi.Aws.Lambda.Inputs;
 using System;
 using System.Collections.Generic;
 
@@ -44,41 +47,6 @@ return await Pulumi.Deployment.RunAsync(() =>
         ApiKeyRequired = true, // Require API key for this method
     });
 
-    // Create API Gateway Integration (placeholder for now)
-    var contactIntegration = new Integration("contact-integration", new()
-    {
-        RestApi = api.Id,
-        ResourceId = contactResource.Id,
-        HttpMethod = contactMethod.HttpMethod,
-        Type = "MOCK",
-        RequestTemplates =
-        {
-            { "application/json", "{\"statusCode\": 200}" },
-        },
-    });
-
-    // Create API Gateway Method Response
-    var contactMethodResponse = new MethodResponse("contact-method-response", new()
-    {
-        RestApi = api.Id,
-        ResourceId = contactResource.Id,
-        HttpMethod = contactMethod.HttpMethod,
-        StatusCode = "200",
-    });
-
-    // Create API Gateway Integration Response
-    var contactIntegrationResponse = new IntegrationResponse("contact-integration-response", new()
-    {
-        RestApi = api.Id,
-        ResourceId = contactResource.Id,
-        HttpMethod = contactMethod.HttpMethod,
-        StatusCode = contactMethodResponse.StatusCode,
-        ResponseTemplates =
-        {
-            { "application/json", "{\"message\": \"Contact form received\"}" },
-        },
-    });
-
     // Create API Key
     var apiKey = new ApiKey("contact-form-api-key", new()
     {
@@ -92,97 +60,7 @@ return await Pulumi.Deployment.RunAsync(() =>
         },
     });
 
-    // Create API Gateway Deployment (depends on methods being created)
-    var deployment = new Pulumi.Aws.ApiGateway.Deployment("contact-form-api-deployment", new()
-    {
-        RestApi = api.Id,
-        Description = "Deployment for contact form API",
-    }, new CustomResourceOptions
-    {
-        DependsOn = { contactIntegrationResponse }, // Ensure methods are created first
-    });
-
-    // Create API Gateway Stage
-    var stage = new Stage("contact-form-api-stage", new()
-    {
-        RestApi = api.Id,
-        Deployment = deployment.Id,
-        StageName = "prod",
-        Description = "Production stage for contact form API",
-        Variables =
-        {
-            { "deployed_at", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") },
-        },
-        Tags =
-        {
-            { "Environment", "production" },
-            { "Application", "contact-form" },
-            { "Purpose", "ContactFormAPIStage" },
-        },
-    });
-
-    // Create Usage Plan (after stage is created)
-    var usagePlan = new UsagePlan("contact-form-usage-plan", new()
-    {
-        Name = "contact-form-usage-plan",
-        Description = "Usage plan for contact form API",
-        ApiStages = new[]
-        {
-            new UsagePlanApiStageArgs
-            {
-                ApiId = api.Id,
-                Stage = stage.StageName,
-            },
-        },
-        QuotaSettings = new UsagePlanQuotaSettingsArgs
-        {
-            Limit = 1000,
-            Period = "DAY",
-        },
-        ThrottleSettings = new UsagePlanThrottleSettingsArgs
-        {
-            RateLimit = 100,
-            BurstLimit = 200,
-        },
-        Tags =
-        {
-            { "Environment", "production" },
-            { "Application", "contact-form" },
-            { "Purpose", "APIUsagePlan" },
-        },
-    }, new CustomResourceOptions
-    {
-        DependsOn = { stage }, // Ensure stage is created first
-    });
-
-    // Associate API Key with Usage Plan
-    var usagePlanKey = new UsagePlanKey("contact-form-usage-plan-key", new()
-    {
-        KeyId = apiKey.Id,
-        KeyType = "API_KEY",
-        UsagePlanId = usagePlan.Id,
-    });
-
-    // Create CloudWatch Log Group for error logging
-    var logGroup = new LogGroup("sveltekit-errors-log-group", new()
-    {
-        Name = "/sveltekit/errors",
-        RetentionInDays = 30, // Retain logs for 30 days (adjust as needed)
-        Tags =
-        {
-            { "Environment", "production" },
-            { "Application", "sveltekit" },
-            { "Purpose", "ErrorLogging" },
-        },
-    });
-
-    // Create CloudWatch Log Stream for app errors
-    var logStream = new LogStream("app-errors-log-stream", new()
-    {
-        Name = $"app-errors-{DateTime.UtcNow:yyyy-MM-dd}",
-        LogGroupName = logGroup.Name,
-    });
-
+    // Create DynamoDB table
     var contact_form_table = new Table("contact-form-table", new()
     {
         Name = "ContactMessages",
@@ -278,6 +156,194 @@ return await Pulumi.Deployment.RunAsync(() =>
         },
     });
 
+    // Create IAM role for Lambda function
+    var lambdaRole = new Role("contact-form-lambda-role", new()
+    {
+        AssumeRolePolicy = @"{
+            ""Version"": ""2012-10-17"",
+            ""Statement"": [
+                {
+                    ""Action"": ""sts:AssumeRole"",
+                    ""Principal"": {
+                        ""Service"": ""lambda.amazonaws.com""
+                    },
+                    ""Effect"": ""Allow""
+                }
+            ]
+        }",
+    });
+
+    // Create IAM policy for Lambda function
+    var lambdaPolicy = new Policy("contact-form-lambda-policy", new()
+    {
+        PolicyDocument = Output.Format($@"{{
+            ""Version"": ""2012-10-17"",
+            ""Statement"": [
+                {{
+                    ""Action"": [
+                        ""logs:CreateLogGroup"",
+                        ""logs:CreateLogStream"",
+                        ""logs:PutLogEvents""
+                    ],
+                    ""Resource"": ""arn:aws:logs:*:*:*"",
+                    ""Effect"": ""Allow""
+                }},
+                {{
+                    ""Action"": [
+                        ""dynamodb:GetItem"",
+                        ""dynamodb:PutItem"",
+                        ""dynamodb:UpdateItem"",
+                        ""dynamodb:DeleteItem""
+                    ],
+                    ""Resource"": ""{contact_form_table.Arn}"",
+                    ""Effect"": ""Allow""
+                }}
+            ]
+        }}"),
+    });
+
+    // Attach IAM policy to Lambda role
+    var lambdaRolePolicyAttachment = new RolePolicyAttachment("contact-form-lambda-role-policy-attachment", new()
+    {
+        Role = lambdaRole.Name,
+        PolicyArn = lambdaPolicy.Arn,
+    });
+
+    // Create Lambda function
+    var lambdaFunction = new Function("contact-form-lambda-function", new()
+    {
+        Runtime = "dotnet8",
+        Handler = "ContactFormLambda::ContactFormLambda.ContactFormHandler::HandleContactFormAsync",
+        Role = lambdaRole.Arn,
+        Code = new FileArchive("./ContactFormLambda/bin/Release/net8.0/publish"),
+        Environment = new FunctionEnvironmentArgs
+        {
+            Variables =
+            {
+                { "DYNAMODB_TABLE_NAME", contact_form_table.Name },
+            },
+        },
+        Timeout = 30,
+        MemorySize = 256,
+        Tags =
+        {
+            { "Environment", "production" },
+            { "Application", "contact-form" },
+            { "Purpose", "ContactFormProcessor" },
+        },
+    });
+
+    // Give API Gateway permission to invoke Lambda function
+    var lambdaPermission = new Permission("contact-form-lambda-permission", new()
+    {
+        Action = "lambda:InvokeFunction",
+        Function = lambdaFunction.Name,
+        Principal = "apigateway.amazonaws.com",
+        SourceArn = Output.Format($"{api.ExecutionArn}/*/*"),
+    });
+
+    // Create API Gateway Integration (Lambda integration)
+    var contactIntegration = new Integration("contact-integration", new()
+    {
+        RestApi = api.Id,
+        ResourceId = contactResource.Id,
+        HttpMethod = contactMethod.HttpMethod,
+        Type = "AWS_PROXY",
+        IntegrationHttpMethod = "POST",
+        Uri = lambdaFunction.InvokeArn,
+    });
+
+    // Create API Gateway Deployment (depends on methods being created)
+    var deployment = new Pulumi.Aws.ApiGateway.Deployment("contact-form-api-deployment", new()
+    {
+        RestApi = api.Id,
+        Description = "Deployment for contact form API",
+    }, new CustomResourceOptions
+    {
+        DependsOn = { contactIntegration }, // Ensure methods are created first
+    });
+
+    // Create API Gateway Stage
+    var stage = new Stage("contact-form-api-stage", new()
+    {
+        RestApi = api.Id,
+        Deployment = deployment.Id,
+        StageName = "prod",
+        Description = "Production stage for contact form API",
+        Variables =
+        {
+            { "deployed_at", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") },
+        },
+        Tags =
+        {
+            { "Environment", "production" },
+            { "Application", "contact-form" },
+            { "Purpose", "ContactFormAPIStage" },
+        },
+    });
+
+    // Create Usage Plan (after stage is created)
+    var usagePlan = new UsagePlan("contact-form-usage-plan", new()
+    {
+        Name = "contact-form-usage-plan",
+        Description = "Usage plan for contact form API",
+        ApiStages = new[]
+        {
+            new UsagePlanApiStageArgs
+            {
+                ApiId = api.Id,
+                Stage = stage.StageName,
+            },
+        },
+        QuotaSettings = new UsagePlanQuotaSettingsArgs
+        {
+            Limit = 1000,
+            Period = "DAY",
+        },
+        ThrottleSettings = new UsagePlanThrottleSettingsArgs
+        {
+            RateLimit = 100,
+            BurstLimit = 200,
+        },
+        Tags =
+        {
+            { "Environment", "production" },
+            { "Application", "contact-form" },
+            { "Purpose", "APIUsagePlan" },
+        },
+    }, new CustomResourceOptions
+    {
+        DependsOn = { stage }, // Ensure stage is created first
+    });
+
+    // Associate API Key with Usage Plan
+    var usagePlanKey = new UsagePlanKey("contact-form-usage-plan-key", new()
+    {
+        KeyId = apiKey.Id,
+        KeyType = "API_KEY",
+        UsagePlanId = usagePlan.Id,
+    });
+
+    // Create CloudWatch Log Group for error logging
+    var logGroup = new LogGroup("contact-form-errors-log-group", new()
+    {
+        Name = "/contact-form/errors",
+        RetentionInDays = 30, // Retain logs for 30 days (adjust as needed)
+        Tags =
+        {
+            { "Environment", "production" },
+            { "Application", "contact-form" },
+            { "Purpose", "ErrorLogging" },
+        },
+    });
+
+    // Create CloudWatch Log Stream for app errors
+    var logStream = new LogStream("app-errors-log-stream", new()
+    {
+        Name = $"app-errors-{DateTime.UtcNow:yyyy-MM-dd}",
+        LogGroupName = logGroup.Name,
+    });
+
     return new Dictionary<string, object?>
     {
         ["tableName"] = contact_form_table.Name,
@@ -289,5 +355,6 @@ return await Pulumi.Deployment.RunAsync(() =>
         ["apiKeyId"] = apiKey.Id,
         ["apiKeyValue"] = apiKey.Value,
         ["usagePlanId"] = usagePlan.Id,
+        ["lambdaFunctionArn"] = lambdaFunction.Arn,
     };
 });

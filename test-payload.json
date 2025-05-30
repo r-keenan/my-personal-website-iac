@@ -1,0 +1,8 @@
+{
+  "httpMethod": "POST",
+  "path": "/contact",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": "{\"firstName\":\"John\",\"lastName\":\"Doe\",\"email\":\"john.doe@example.com\",\"subject\":\"Test\",\"message\":\"Test message\"}"
+}
