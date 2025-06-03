@@ -381,9 +381,9 @@ return await Pulumi.Deployment.RunAsync(() =>
     });
 
     // Create CloudWatch Log Group for error logging
-    var logGroup = new LogGroup("contact-form-errors-log-group", new()
+    var logGroup = new LogGroup("sveltekit-errors-log-group", new()
     {
-        Name = "/contact-form/errors",
+        Name = "/sveltekit/errors",
         RetentionInDays = 30, // Retain logs for 30 days (adjust as needed)
         Tags =
         {
@@ -396,7 +396,7 @@ return await Pulumi.Deployment.RunAsync(() =>
     // Create CloudWatch Log Stream for app errors
     var logStream = new LogStream("app-errors-log-stream", new()
     {
-        Name = $"app-errors-{DateTime.UtcNow:yyyy-MM-dd}",
+        Name = $"app-errors-{DateTime.UtcNow.ToString("yyyy-MM-dd")}",
         LogGroupName = logGroup.Name,
     });
 
